@@ -1,6 +1,9 @@
 from BeautifulSoup import BeautifulSoup
 import re
 import urllib2
+import os
+import json
+import sys
 
 
 # import sys, logging
@@ -9,9 +12,12 @@ import urllib2
 # logger.setLevel(logging.INFO)
 #logger.setLevel(logging.DEBUG)
 
+DEBUG = False
 
 USERNAME = "REDACTED"
 PASSWORD = "REDACTED"
+
+COOKIEFILE = os.path.expanduser("~/.meteorsms/.cookiejar")
 
 
 def getphonebook():
@@ -48,7 +54,7 @@ def send_text_mech(number,text):
 
     br = mechanize.Browser()
 
-    #TODO: save and loading of cookies!
+    #TODO: save and loading of cookies for mechanize version!
 
     br.addheaders = [("User-Agent", "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.9.2.7) Gecko/20100713 Firefox/3.6.7")]
     br.set_handle_robots(False) # sorry, but otherwise it looks for a non-existent robots.txt and seems to block
@@ -90,9 +96,7 @@ def send_text_mech(number,text):
     data = "ajaxRequest=sendSMS&messageText=" + urllib2.quote(text.encode("utf-8"))
     r2 = br.open(url,data)
     assert(r2.code == 200)
-
     #TODO: ensure these responses are 200 OK and not 301 moved temporarily
-
     #TODO: make these neater by using encodeuri to build the data part
 
 
@@ -103,9 +107,29 @@ def send_text_urllib2(number,text):
 
     base = "https://www.mymeteor.ie/"
 
-    global cj
-    cj = cookielib.CookieJar()
-    opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj),urllib2.HTTPSHandler(debuglevel=5))
+    global cj #TODO: remove
+    #cj = cookielib.CookieJar()
+    cj = cookielib.LWPCookieJar(COOKIEFILE)
+    try:
+        cj.load(ignore_discard=True)
+    except:
+        os.mknod(COOKIEFILE)
+
+    #don't want to bother following the 302 redirects after we POST our login info
+    class NoRedirectHandler(urllib2.HTTPRedirectHandler):
+        def http_error_302(self, req, fp, code, msg, headers):
+            infourl = urllib2.addinfourl(fp, headers, req.get_full_url())
+            infourl.status = code
+            infourl.code = code
+            return infourl
+
+
+    if DEBUG:
+        opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj),NoRedirectHandler,urllib2.HTTPSHandler(debuglevel=5))
+    else:
+        opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj),NoRedirectHandler)
+
+
     opener.addheaders = [
     ('User-Agent', 'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-GB; rv:1.9.2.13) Gecko/20101203 Firefox/3.6.13'),
     ('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'),
@@ -122,46 +146,44 @@ def send_text_urllib2(number,text):
 
     #TODO: get keepalive working for speed!
 
+    
+
+    #r2 = urllib2.urlopen(urljoin(base,"/go/freewebtext")) #previously got this page and parsed it for the number left
+    # soup = BeautifulSoup(r2.read())
+    # print "Texts remaining:", soup.find(id = "numfreesmstext")['value']
+    r2 = urllib2.urlopen(urljoin(base,"cfusion/meteor/Meteor_REST/service/freeSMS"))
 
 
-    #POST
-    #https://www.mymeteor.ie/go/mymeteor-login-manager
-    #[('Content-type', 'application/x-www-form-urlencoded'), ('Content-length', '26'), ('Referer', 'http://meteor.ie'), ('Host', 'www.mymeteor.ie'), ('User-agent', 'Python-urllib/2.6')]
-    data = "msisdn=%s&pin=%s" % (USERNAME,PASSWORD)
-    r1 = urllib2.urlopen(urljoin(base,"/go/mymeteor-login-manager"),data)
-    #print r1.info()
+    if r2.code != 200: #probably 302, we need to log in again
+        data = "msisdn=%s&pin=%s" % (USERNAME,PASSWORD)
+        r1 = urllib2.urlopen(urljoin(base,"/go/mymeteor-login-manager"),data)
+        r2 = urllib2.urlopen(urljoin(base,"cfusion/meteor/Meteor_REST/service/freeSMS"))
 
 
-    #GET
-    #https://www.mymeteor.ie/go/freewebtext
-    #[('Referer', 'https://www.mymeteor.ie/go/mymeteor-login-manager'), ('Host', 'www.mymeteor.ie'), ('Cookie', 'CFTOKEN=REDACTED; MyMeteorCMS-cookie=REDACTED; CFID=REDACTED; JSESSIONID=REDACTED'), ('User-agent', 'Python-urllib/2.6')]
-    r2 = urllib2.urlopen(urljoin(base,"/go/freewebtext"))
-    #print r2.info()
-    pageData = r2.read()
-    soup = BeautifulSoup(pageData)
-    print "Texts remaining:", soup.find(id = "numfreesmstext")['value']
-
-    #cfid,cftoken = getCFIDandCFTOKEN(pageData)
+    #could also use (non-public) interface: cj._cookies['www.mymeteor.ie']['/']['CFID'].value
     for cookie in cj:
-        if cookie.name == "CFID":
+        if cookie.name == "CFID" and cookie.domain == 'www.mymeteor.ie':
             cfid = cookie.value
-        elif cookie.name == "CFTOKEN":
+        elif cookie.name == "CFTOKEN" and cookie.domain == 'www.mymeteor.ie':
             cftoken = cookie.value
 
+    texts_remaining = json.loads(r2.read())['FreeSMS']['remainingFreeSMS']
+    print "Texts remaining:", texts_remaining
 
-    #return
+    cj.save(ignore_discard=True)
+
 
     url = "/mymeteorapi/index.cfm?event=smsAjax&CFID=%s&CFTOKEN=%s&func=addEnteredMsisdns" % (cfid,cftoken)
     data = "ajaxRequest=addEnteredMSISDNs&remove=-&add=" + urllib2.quote(("0|" + number).encode("utf-8"))
     r3 = urllib2.urlopen(urljoin(base,url),data)
     assert(r3.code == 200)
-    print r3.info()
+
 
     url = "/mymeteorapi/index.cfm?event=smsAjax&func=sendSMS&CFID=%s&CFTOKEN=%s" %(cfid,cftoken)
     data = "ajaxRequest=sendSMS&messageText=" + urllib2.quote(text.encode("utf-8"))
     r4 = urllib2.urlopen(urljoin(base,url),data)
     assert(r4.code == 200)
-    print r4.info()
+
 
 
 def send_text(number,text):
@@ -169,13 +191,35 @@ def send_text(number,text):
     assert(len(text) <= 480) #480 characters max - will count as 3 texts - this is useful since we won't have to do splitting ourselves
     assert(number.isdigit())
 
+    assert(number == "REDACTED") #FOR TESTING!!
+
     send_text_urllib2(number,text)
 
 
 
 def main():
     
-    send_text("REDACTED","cool")
+    # var = raw_input("Enter something: ")
+    # print var
+
+    from optparse import OptionParser
+    parser = OptionParser()
+    (options, args) = parser.parse_args()
+
+    number = args[0]
+
+    if not number.isdigit():
+        print "no number"
+        return
+
+    print "[ recipient : %s (%s) ]" % ("dunno",number)
+    text = sys.stdin.read()
+
+
+    if text != "":
+        send_text(number,text)
+
+    # send_text("REDACTED","cool")
 
 
 if __name__ == "__main__":
