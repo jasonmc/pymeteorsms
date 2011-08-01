@@ -1,19 +1,11 @@
 #!/usr/bin/env python
-import re
 import urllib2
 import cookielib
+import re
 import os
 import json
 import sys
 
-
-# import sys, logging
-# logger = logging.getLogger("mechanize")
-# logger.addHandler(logging.StreamHandler(sys.stdout))
-# logger.setLevel(logging.INFO)
-#logger.setLevel(logging.DEBUG)
-
-DEBUG = False
 
 COOKIEFILE = os.path.expanduser("~/.meteorsms/.cookiejar")
 
@@ -31,8 +23,11 @@ def prettyPrintHTML(html):
     from pygments import highlight
     print highlight(html,HtmlLexer(),Terminal256Formatter())
 
+def to_txt_spk(words):
+    return "".join(c for c in words if c not in "aeiou")
 
 def parseConfig():
+    """Parse o2sms style config file"""
     import shlex
     configpath = os.path.expanduser("~/.meteorsms/config")
     configfile = open(configpath,"r")
@@ -78,6 +73,12 @@ def getCFIDandCFTOKEN(pageData):
 
 
 def send_text_mech(number,text):
+    # import sys, logging
+    # logger = logging.getLogger("mechanize")
+    # logger.addHandler(logging.StreamHandler(sys.stdout))
+    # logger.setLevel(logging.INFO)
+    # logger.setLevel(logging.DEBUG)
+
     from BeautifulSoup import BeautifulSoup
     import mechanize
 
@@ -132,19 +133,15 @@ def send_text_mech(number,text):
 
 def send_text_urllib2(number,text):
     from urlparse import urljoin
-
     base = "https://www.mymeteor.ie/"
 
-    global cj #TODO: remove
-    #cj = cookielib.CookieJar()
     cj = cookielib.LWPCookieJar(COOKIEFILE)
     try:
         cj.load(ignore_discard=True)
-    except:
-        #os.mknod(COOKIEFILE)
+    except: # create file
         open('COOKIEFILE','w')
 
-    #don't want to bother following the 302 redirects after we POST our login info
+    #don't want to bother following the multiple 302 redirects after we POST our login info
     class NoRedirectHandler(urllib2.HTTPRedirectHandler):
         def http_error_302(self, req, fp, code, msg, headers):
             infourl = urllib2.addinfourl(fp, headers, req.get_full_url())
@@ -152,12 +149,10 @@ def send_text_urllib2(number,text):
             infourl.code = code
             return infourl
 
-
     if DEBUG:
         opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj),NoRedirectHandler,urllib2.HTTPSHandler(debuglevel=5))
     else:
         opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj),NoRedirectHandler)
-
 
     opener.addheaders = [
     ('User-Agent', 'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-GB; rv:1.9.2.13) Gecko/20101203 Firefox/3.6.13'),
@@ -166,30 +161,24 @@ def send_text_urllib2(number,text):
     ('Accept-Encoding', 'gzip,deflate'),
     ('Accept-Charset', 'ISO-8859-1,utf-8;q=0.7,*;q=0.7'),
     ('Keep-Alive', '115'),
-    ('Connection', 'keep-alive'),
+    ('Connection', 'keep-alive'), # is ignored
     ('Cache-Control', 'max-age=0'),
     ('Referer', base)]
-
 
     urllib2.install_opener(opener)
 
     #TODO: get keepalive working for speed!
 
-    
-
-    #r2 = urllib2.urlopen(urljoin(base,"/go/freewebtext")) #previously got this page and parsed it for the number left
-    # soup = BeautifulSoup(r2.read())
-    # print "Texts remaining:", soup.find(id = "numfreesmstext")['value']
     try:
         r2 = urllib2.urlopen(urljoin(base,"cfusion/meteor/Meteor_REST/service/freeSMS"))
-        if r2 != 200:
+        if r2.code != 200:
             raise Exception()
     except:
         #500ish error if caused eception, otherwise probably 302 - we need to log in
         data = "msisdn=%s&pin=%s" % (config['username'],config['password'])
         r1 = urllib2.urlopen(urljoin(base,"/go/mymeteor-login-manager"),data)
+        #TODO: figure out when a captcha is presented and bail
         r2 = urllib2.urlopen(urljoin(base,"cfusion/meteor/Meteor_REST/service/freeSMS"))
-
 
 
     #could also use (non-public) interface: cj._cookies['www.mymeteor.ie']['/']['CFID'].value
@@ -200,13 +189,10 @@ def send_text_urllib2(number,text):
             cftoken = cookie.value
 
     texts_remaining_before = json.loads(r2.read())['FreeSMS']['remainingFreeSMS']
-    print "Texts remaining before:", texts_remaining_before
-
+    #print "Texts remaining before:", texts_remaining_before
 
     cookieJarDateFix(cj)
-
     cj.save(ignore_discard=True)
-
 
     url = "/mymeteorapi/index.cfm?event=smsAjax&CFID=%s&CFTOKEN=%s&func=addEnteredMsisdns" % (cfid,cftoken)
     data = "ajaxRequest=addEnteredMSISDNs&remove=-&add=" + urllib2.quote(("0|" + number).encode("utf-8"))
@@ -221,31 +207,29 @@ def send_text_urllib2(number,text):
 
     r5 = urllib2.urlopen(urljoin(base,"cfusion/meteor/Meteor_REST/service/freeSMS"))
     texts_remaining = json.loads(r5.read())['FreeSMS']['remainingFreeSMS']
-    assert(texts_remaining < texts_remaining_before)
+
+    will_use = lambda n : ((n-1)/160) + 1
+    #this is not exactly right due to possible utf-8 conversion
+    assert(texts_remaining == texts_remaining_before - will_use(len(text)))
     print "Texts remaining now:", texts_remaining
 
 
-
 def send_text(number,text):
-
     assert(len(text) <= 480) #480 characters max - will count as 3 texts - this is useful since we won't have to do splitting ourselves
-
     number = sanitizeNumber(number)
-
     send_text_urllib2(number,text.rstrip("\n"))
 
 
-
 def main():
-    
-    # var = raw_input("Enter something: ")
-    # print var
-
     parseConfig()
 
     from optparse import OptionParser
-    parser = OptionParser()
+    usage = "usage: %prog [options] number"
+    parser = OptionParser(usage=usage)
+    parser.add_option("-d", "--debug", action="store_true", dest="debug",default=False)
     (options, args) = parser.parse_args()
+    global DEBUG
+    DEBUG = options.debug
 
     if len(args) < 1:
         print "No number or alias, exiting"
@@ -253,7 +237,7 @@ def main():
 
     number = args[0]
 
-    alias = "unknown"
+    alias = None
     if not number.isdigit() or len(number) < 10:
         try:
             alias = number
@@ -261,10 +245,11 @@ def main():
         except:
             print "No number or alias, exiting"
             return 1
-
         
-
-    print "[ recipient : %s (%s) ]" % (alias,number)
+    if alias:
+        print "[ recipient : %s (%s) ]" % (alias,number)
+    else:
+        print "[ recipient : %s ]" % number
     text = sys.stdin.read()
 
 
@@ -272,56 +257,8 @@ def main():
         print "--sending--"
         send_text(number,text)
 
-    # send_text("REDACTED","cool")
-
-
-
-
 
 
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-############################### FOR REFERENCE ###############################
-
-
-#smsRecall becomes  "/mymeteorapi/index.cfm?event=smsAjax&CFID=REDACTED&CFTOKEN=REDACTED"
-
-#need to add recipients using AJAX!!
-"""
-var CFID = REDACTED;
-var CFTOKEN = REDACTED;
-var smsRecall = "/mymeteorapi/index.cfm?event=smsAjax";
-
-
-    msisdnDetailObj.value="0|"+getEl("quickSearchMsisdn").value;
-
-    searchValue=getEl("msisdnDetail").value;
-    AddEnteredMSISDN=new AjaxRequest(smsRecall + "&func=addEnteredMsisdns","ajaxRequest=addEnteredMSISDNs&remove=-&add="+encodeURIComponent(searchValue),"addEnteredMSISDN",7000); 
-
-"""
-
-
-
-"""
-smsText=getEl("smsComposeTextArea").value;
-
-    ajaxURL="/mymeteorapi/index.cfm?event=smsAjax&func=sendSMS&CFID=REDACTED&CFTOKEN=REDACTED";
-    ajaxParams="ajaxRequest=sendSMS&messageText="+encodeURIComponent(smsText);
-//  window.open(ajaxURL);
-
-    switchPane("fwtSent");
-    hideEl("groupError");
-    hideEl("singleError");
-    hideEl("systemError");
-    showEl("sendingText");
-    hideEl("sentTrue");
-    hideEl("sentFalse");
-    sendLeText=new AjaxRequest(ajaxURL,ajaxParams,"sendSMS",7000);
-}
-"""
