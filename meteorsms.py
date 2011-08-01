@@ -1,21 +1,19 @@
 #!/usr/bin/env python
 import urllib2
+from urlparse import urljoin
+from urlparse import urlsplit
 import cookielib
 import re
 import os
 import json
 import sys
+import shlex
 
 
 COOKIEFILE = os.path.expanduser("~/.meteorsms/.cookiejar")
 
 config = {}
 
-
-def cookieJarDateFix(cj):
-    for ck in cj:
-        if ck.expires >= (2**31 -1): #time_t on 32 bit python :(
-            ck.expires = None
 
 def prettyPrintHTML(html):
     from pygments.lexers import HtmlLexer
@@ -28,7 +26,6 @@ def to_txt_spk(words):
 
 def parseConfig():
     """Parse o2sms style config file"""
-    import shlex
     configpath = os.path.expanduser("~/.meteorsms/config")
     configfile = open(configpath,"r")
     config['aliases'] = {}
@@ -52,97 +49,131 @@ def sanitizeNumber(number):
     assert(number.isdigit())
     return number
 
+class MeteorSMS:
+    def __init__(self):
+        self.base = "https://www.mymeteor.ie/"
+
+        #monkey patch the broken behavior
+        cookielib.LWPCookieJar.old_save = cookielib.LWPCookieJar.save
+        def cookieJarDateFixSave(self):
+            """On 32-bit systems cookies set beyond 2038 will cause error when attempting to save cookiejar"""
+            for ck in self:
+                if ck.expires >= (2**31 -1): #time_t on 32 bit python :(
+                    ck.expires = None
+            self.old_save(ignore_discard=True)
+        cookielib.LWPCookieJar.save = cookieJarDateFixSave
+
+        self.cj = cookielib.LWPCookieJar(COOKIEFILE)
+        
+        try:
+            self.cj.load(ignore_discard=True)
+        except: # create file
+            open(COOKIEFILE,'w')
+        else:
+            self.updateCFIDandCFTOKEN()
 
 
-def send_text_urllib2(number,text):
-    from urlparse import urljoin
-    from urlparse import urlsplit
+        # don't want to bother following the multiple 302 redirects after we POST our login info
+        class NoRedirectHandler(urllib2.HTTPRedirectHandler):
+            def http_error_302(self, req, fp, code, msg, headers):
+                infourl = urllib2.addinfourl(fp, headers, req.get_full_url())
+                infourl.status = code
+                infourl.code = code
+                return infourl
 
-    base = "https://www.mymeteor.ie/"
+        if DEBUG:
+            opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(self.cj),NoRedirectHandler,urllib2.HTTPSHandler(debuglevel=5))
+        else:
+            opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(self.cj),NoRedirectHandler)
 
-    cj = cookielib.LWPCookieJar(COOKIEFILE)
-    try:
-        cj.load(ignore_discard=True)
-    except: # create file
-        open('COOKIEFILE','w')
+        opener.addheaders = [
+            ('User-Agent', 'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-GB; rv:1.9.2.13) Gecko/20101203 Firefox/3.6.13'),
+            ('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'),
+            ('Accept-Language', 'en-gb,en;q=0.5'),
+            ('Accept-Encoding', 'gzip,deflate'),
+            ('Accept-Charset', 'ISO-8859-1,utf-8;q=0.7,*;q=0.7'),
+            ('Keep-Alive', '115'),
+            ('Connection', 'keep-alive'), # is ignored
+            ('Cache-Control', 'max-age=0'),
+            ('Referer', self.base)]
 
-    #don't want to bother following the multiple 302 redirects after we POST our login info
-    class NoRedirectHandler(urllib2.HTTPRedirectHandler):
-        def http_error_302(self, req, fp, code, msg, headers):
-            infourl = urllib2.addinfourl(fp, headers, req.get_full_url())
-            infourl.status = code
-            infourl.code = code
-            return infourl
+        urllib2.install_opener(opener)
+        # TODO: get keepalive working for speed!
 
-    if DEBUG:
-        opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj),NoRedirectHandler,urllib2.HTTPSHandler(debuglevel=5))
-    else:
-        opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj),NoRedirectHandler)
+        try:
+            self.updateFreeTexts()
+        except:
+            # 500ish error if caused exception, otherwise probably 302 - we need to log in
+            self.login()
 
-    opener.addheaders = [
-    ('User-Agent', 'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-GB; rv:1.9.2.13) Gecko/20101203 Firefox/3.6.13'),
-    ('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'),
-    ('Accept-Language', 'en-gb,en;q=0.5'),
-    ('Accept-Encoding', 'gzip,deflate'),
-    ('Accept-Charset', 'ISO-8859-1,utf-8;q=0.7,*;q=0.7'),
-    ('Keep-Alive', '115'),
-    ('Connection', 'keep-alive'), # is ignored
-    ('Cache-Control', 'max-age=0'),
-    ('Referer', base)]
+        #texts_remaining_before = json.loads(self.remaining_req.read())['FreeSMS']['remainingFreeSMS']
+        # print "Texts remaining before:", texts_remaining_before
 
-    urllib2.install_opener(opener)
+    def __del__(self):
+        self.cj.save()
 
-    #TODO: get keepalive working for speed!
 
-    try:
-        r2 = urllib2.urlopen(urljoin(base,"cfusion/meteor/Meteor_REST/service/freeSMS"))
-        if r2.code != 200:
-            raise Exception()
-    except:
-        #500ish error if caused eception, otherwise probably 302 - we need to log in
+    def updateCFIDandCFTOKEN(self):
+        # could also use (non-public) interface: cj._cookies[urlsplit(base).hostname]['/']['CFID'].value
+        for cookie in self.cj:
+            if cookie.name == "CFID" and cookie.domain == urlsplit(self.base).hostname:
+                self.cfid = cookie.value
+            elif cookie.name == "CFTOKEN" and cookie.domain == urlsplit(self.base).hostname:
+                self.cftoken = cookie.value
+
+
+    def login(self):
         data = "msisdn=%s&pin=%s" % (config['username'],config['password'])
-        r1 = urllib2.urlopen(urljoin(base,"/go/mymeteor-login-manager"),data)
-        #TODO: figure out when a captcha is presented and bail
-        r2 = urllib2.urlopen(urljoin(base,"cfusion/meteor/Meteor_REST/service/freeSMS"))
+        resp1 = urllib2.urlopen(urljoin(self.base,"/go/mymeteor-login-manager"),data)
+        # TODO: figure out when a captcha is presented and bail
+
+        self.updateCFIDandCFTOKEN()
+        self.cj.save()
+        self.updateFreeTexts()
 
 
-    #could also use (non-public) interface: cj._cookies[urlsplit(base).hostname]['/']['CFID'].value
-    for cookie in cj:
-        if cookie.name == "CFID" and cookie.domain == urlsplit(base).hostname:
-            cfid = cookie.value
-        elif cookie.name == "CFTOKEN" and cookie.domain == urlsplit(base).hostname:
-            cftoken = cookie.value
+    def updateFreeTexts(self):
+        self.remaining_req = urllib2.urlopen(urljoin(self.base,"cfusion/meteor/Meteor_REST/service/freeSMS"))
+        if self.remaining_req.code != 200: # a redict is as good as failure here
+            raise Exception()
+        self.remaining_texts = json.loads(self.remaining_req.read())['FreeSMS']['remainingFreeSMS']
 
-    texts_remaining_before = json.loads(r2.read())['FreeSMS']['remainingFreeSMS']
-    #print "Texts remaining before:", texts_remaining_before
-
-    cookieJarDateFix(cj)
-    cj.save(ignore_discard=True)
-
-    url = "/mymeteorapi/index.cfm?event=smsAjax&CFID=%s&CFTOKEN=%s&func=addEnteredMsisdns" % (cfid,cftoken)
-    data = "ajaxRequest=addEnteredMSISDNs&remove=-&add=" + urllib2.quote(("0|" + number).encode("utf-8"))
-    r3 = urllib2.urlopen(urljoin(base,url),data)
-    assert(r3.code == 200)
+    def getFreeTexts(self):
+        return self.remaining_texts
 
 
-    url = "/mymeteorapi/index.cfm?event=smsAjax&func=sendSMS&CFID=%s&CFTOKEN=%s" %(cfid,cftoken)
-    data = "ajaxRequest=sendSMS&messageText=" + urllib2.quote(text.encode("utf-8"))
-    r4 = urllib2.urlopen(urljoin(base,url),data)
-    assert(r4.code == 200)
+    def sendText(self,number,text):
+        texts_remaining_before = self.getFreeTexts()
+        url = "/mymeteorapi/index.cfm?event=smsAjax&CFID=%s&CFTOKEN=%s&func=addEnteredMsisdns" % (self.cfid, self.cftoken)
+        data = "ajaxRequest=addEnteredMSISDNs&remove=-&add=" + urllib2.quote(("0|" + number).encode("utf-8"))
+        resp1 = urllib2.urlopen(urljoin(self.base,url),data)
+        assert(resp1.code == 200)
 
-    r5 = urllib2.urlopen(urljoin(base,"cfusion/meteor/Meteor_REST/service/freeSMS"))
-    texts_remaining = json.loads(r5.read())['FreeSMS']['remainingFreeSMS']
 
-    will_use = lambda n : ((n-1)/160) + 1
-    #this is not exactly right due to possible utf-8 conversion
-    assert(texts_remaining == texts_remaining_before - will_use(len(text)))
-    print "Texts remaining now:", texts_remaining
+        url = "/mymeteorapi/index.cfm?event=smsAjax&func=sendSMS&CFID=%s&CFTOKEN=%s" % (self.cfid, self.cftoken)
+        data = "ajaxRequest=sendSMS&messageText=" + urllib2.quote(text.encode("utf-8"))
+        resp2 = urllib2.urlopen(urljoin(self.base,url),data)
+        assert(resp2.code == 200)
 
+        self.updateFreeTexts()
+        texts_remaining = self.getFreeTexts()
+
+        will_use = lambda n : ((n-1)/160) + 1
+        # this is not exactly right due to possible utf-8 conversion
+        assert(texts_remaining == texts_remaining_before - will_use(len(text)))
+
+
+
+def print_remaining():
+    m = MeteorSMS()
+    print "Texts remaining:", m.getFreeTexts()
+    
 
 def send_text(number,text):
     assert(len(text) <= 480) #480 characters max - will count as 3 texts - this is useful since we won't have to do splitting ourselves
-    number = sanitizeNumber(number)
-    send_text_urllib2(number,text.rstrip("\n"))
+    m = MeteorSMS()
+    m.sendText(sanitizeNumber(number),text.rstrip("\n"))
+    print "Texts remaining now:", m.getFreeTexts()
 
 
 def main():
@@ -153,9 +184,15 @@ def main():
     parser = OptionParser(usage=usage)
     parser.add_option("-d", "--debug", action="store_true", dest="debug",default=False)
     parser.add_option("-m", "--message", metavar="STRING", help="Don't wait for STDIN, send this message", dest="text")
+    parser.add_option("-r", "--remaining", action="store_true", default=False, help="List number of free texts remaining", dest="remaining")
     (options, args) = parser.parse_args()
     global DEBUG
     DEBUG = options.debug
+
+    if options.remaining:
+        print_remaining()
+        return
+
 
     if len(args) < 1:
         print "No number or alias, exiting"
