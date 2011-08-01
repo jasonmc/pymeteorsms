@@ -227,6 +227,7 @@ def main():
     usage = "usage: %prog [options] number"
     parser = OptionParser(usage=usage)
     parser.add_option("-d", "--debug", action="store_true", dest="debug",default=False)
+    parser.add_option("-m", "--message", metavar="STRING", help="Don't wait for STDIN, send this message", dest="text")
     (options, args) = parser.parse_args()
     global DEBUG
     DEBUG = options.debug
@@ -250,8 +251,11 @@ def main():
         print "[ recipient : %s (%s) ]" % (alias,number)
     else:
         print "[ recipient : %s ]" % number
-    text = sys.stdin.read()
 
+    if options.text:
+        text = options.text
+    else:
+        text = sys.stdin.read()
 
     if text != "":
         print "--sending--"

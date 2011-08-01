@@ -1,2 +1,3 @@
 * Store new numbers as aliases
 * All the features of Perl meteorsms!
+* Ensure config file and cookie file are not readable by other users
