@@ -54,85 +54,10 @@ def sanitizeNumber(number):
 
 
 
-def getCFIDandCFTOKEN(pageData):
-    regex = re.compile("var CFID = (\d*);")
-    try:
-        r = regex.search(pageData)
-        cfid = r.groups()[0]
-    except:
-        raise Exception("Could not get CFID!")
-    regex = re.compile("var CFTOKEN = (\d*);")
-    try:
-        r = regex.search(pageData)
-        cftoken = r.groups()[0]
-    except:
-        raise Exception("Could not get CFTOKEN!")
-
-    return cfid, cftoken
-
-
-
-def send_text_mech(number,text):
-    # import sys, logging
-    # logger = logging.getLogger("mechanize")
-    # logger.addHandler(logging.StreamHandler(sys.stdout))
-    # logger.setLevel(logging.INFO)
-    # logger.setLevel(logging.DEBUG)
-
-    from BeautifulSoup import BeautifulSoup
-    import mechanize
-
-    br = mechanize.Browser()
-
-    #TODO: save and loading of cookies for mechanize version!
-
-    br.addheaders = [("User-Agent", "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.9.2.7) Gecko/20100713 Firefox/3.6.7")]
-    br.set_handle_robots(False) # sorry, but otherwise it looks for a non-existent robots.txt and seems to block
-
-
-    br.open("http://meteor.ie")
-
-
-    for f in br.forms():
-        if f.attrs['id'] == "MyMeteorLogin":
-            loginForm = f
-    assert(loginForm)
-    br.form = loginForm
-
-
-    br["msisdn"] = config['username']
-    br["pin"] = config['password']
-    login_response = br.submit()
-    assert(login_response.code == 200)
-
-    br.follow_link(br.find_link(url_regex="freeweb"))
-    data = br.response().get_data()
-    soup = BeautifulSoup(data)
-    print "Texts remaining:", soup.find(id = "numfreesmstext")['value']
-
-
-    cfid,cftoken = getCFIDandCFTOKEN(data)
-
-
-    #we can't click anything anymore, let's do the ajax requests ourselves
-
-    url = "/mymeteorapi/index.cfm?event=smsAjax&CFID=%s&CFTOKEN=%s&func=addEnteredMsisdns" % (cfid,cftoken)
-    data = "ajaxRequest=addEnteredMSISDNs&remove=-&add=" + urllib2.quote(("0|" + number).encode("utf-8"))
-    r1 = br.open(url,data)
-    assert(r1.code == 200)
-
-
-    url = "/mymeteorapi/index.cfm?event=smsAjax&func=sendSMS&CFID=%s&CFTOKEN=%s" %(cfid,cftoken)
-    data = "ajaxRequest=sendSMS&messageText=" + urllib2.quote(text.encode("utf-8"))
-    r2 = br.open(url,data)
-    assert(r2.code == 200)
-    #TODO: ensure these responses are 200 OK and not 301 moved temporarily
-    #TODO: make these neater by using encodeuri to build the data part
-
-
-
 def send_text_urllib2(number,text):
     from urlparse import urljoin
+    from urlparse import urlsplit
+
     base = "https://www.mymeteor.ie/"
 
     cj = cookielib.LWPCookieJar(COOKIEFILE)
@@ -181,11 +106,11 @@ def send_text_urllib2(number,text):
         r2 = urllib2.urlopen(urljoin(base,"cfusion/meteor/Meteor_REST/service/freeSMS"))
 
 
-    #could also use (non-public) interface: cj._cookies['www.mymeteor.ie']['/']['CFID'].value
+    #could also use (non-public) interface: cj._cookies[urlsplit(base).hostname]['/']['CFID'].value
     for cookie in cj:
-        if cookie.name == "CFID" and cookie.domain == 'www.mymeteor.ie':
+        if cookie.name == "CFID" and cookie.domain == urlsplit(base).hostname:
             cfid = cookie.value
-        elif cookie.name == "CFTOKEN" and cookie.domain == 'www.mymeteor.ie':
+        elif cookie.name == "CFTOKEN" and cookie.domain == urlsplit(base).hostname:
             cftoken = cookie.value
 
     texts_remaining_before = json.loads(r2.read())['FreeSMS']['remainingFreeSMS']
@@ -224,7 +149,7 @@ def main():
     parseConfig()
 
     from optparse import OptionParser
-    usage = "usage: %prog [options] number"
+    usage = "usage: %prog [options] <number|alias>"
     parser = OptionParser(usage=usage)
     parser.add_option("-d", "--debug", action="store_true", dest="debug",default=False)
     parser.add_option("-m", "--message", metavar="STRING", help="Don't wait for STDIN, send this message", dest="text")
@@ -260,8 +185,6 @@ def main():
     if text != "":
         print "--sending--"
         send_text(number,text)
-
-
 
 
 if __name__ == "__main__":
