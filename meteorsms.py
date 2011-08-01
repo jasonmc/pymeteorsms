@@ -214,14 +214,18 @@ def main():
     else:
         print "[ recipient : %s ]" % number
 
-    if options.text:
-        text = options.text
-    else:
-        text = sys.stdin.read()
+    try:
+        if options.text:
+            text = options.text
+        else:
+            text = sys.stdin.read()
 
-    if text != "":
-        print "--sending--"
-        send_text(number,text)
+        if text != "":
+            print "--sending--"
+            send_text(number,text)
+
+    except KeyboardInterrupt:
+        print "[ okay, I'm outta here. ]"
 
 
 if __name__ == "__main__":
