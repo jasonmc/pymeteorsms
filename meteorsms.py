@@ -1,6 +1,7 @@
-from BeautifulSoup import BeautifulSoup
+#!/usr/bin/env python
 import re
 import urllib2
+import cookielib
 import os
 import json
 import sys
@@ -14,22 +15,48 @@ import sys
 
 DEBUG = False
 
-USERNAME = "REDACTED"
-PASSWORD = "REDACTED"
-
 COOKIEFILE = os.path.expanduser("~/.meteorsms/.cookiejar")
 
+config = {}
 
-def getphonebook():
-    """Parse the meteorsms phoenbook"""
-    pass
 
+def cookieJarDateFix(cj):
+    for ck in cj:
+        if ck.expires >= (2**31 -1): #time_t on 32 bit python :(
+            ck.expires = None
 
 def prettyPrintHTML(html):
     from pygments.lexers import HtmlLexer
     from pygments.formatters import Terminal256Formatter
     from pygments import highlight
     print highlight(html,HtmlLexer(),Terminal256Formatter())
+
+
+def parseConfig():
+    import shlex
+    configpath = os.path.expanduser("~/.meteorsms/config")
+    configfile = open(configpath,"r")
+    config['aliases'] = {}
+    for line in configfile:
+        cline = shlex.split(line)
+        if cline:
+            if cline[0] == "username":
+                config['username'] = cline[1]
+            elif cline[0] == "password":
+                config['password'] = cline[1]
+            elif cline[0] == "alias":
+                config['aliases'][cline[1]] = cline[2]
+
+
+def sanitizeNumber(number):
+    "Number is actually a string rep of a number"
+    number = re.sub("\+353", "0", number)
+    assert(number[:2] == "08")
+    assert( 5 <= int(number[2]) <= 9)
+    assert(len(number) == 10)
+    assert(number.isdigit())
+    return number
+
 
 
 def getCFIDandCFTOKEN(pageData):
@@ -49,7 +76,9 @@ def getCFIDandCFTOKEN(pageData):
     return cfid, cftoken
 
 
+
 def send_text_mech(number,text):
+    from BeautifulSoup import BeautifulSoup
     import mechanize
 
     br = mechanize.Browser()
@@ -70,8 +99,8 @@ def send_text_mech(number,text):
     br.form = loginForm
 
 
-    br["msisdn"] = USERNAME
-    br["pin"] = PASSWORD
+    br["msisdn"] = config['username']
+    br["pin"] = config['password']
     login_response = br.submit()
     assert(login_response.code == 200)
 
@@ -103,7 +132,6 @@ def send_text_mech(number,text):
 
 def send_text_urllib2(number,text):
     from urlparse import urljoin
-    import cookielib
 
     base = "https://www.mymeteor.ie/"
 
@@ -113,7 +141,8 @@ def send_text_urllib2(number,text):
     try:
         cj.load(ignore_discard=True)
     except:
-        os.mknod(COOKIEFILE)
+        #os.mknod(COOKIEFILE)
+        open('COOKIEFILE','w')
 
     #don't want to bother following the 302 redirects after we POST our login info
     class NoRedirectHandler(urllib2.HTTPRedirectHandler):
@@ -151,13 +180,16 @@ def send_text_urllib2(number,text):
     #r2 = urllib2.urlopen(urljoin(base,"/go/freewebtext")) #previously got this page and parsed it for the number left
     # soup = BeautifulSoup(r2.read())
     # print "Texts remaining:", soup.find(id = "numfreesmstext")['value']
-    r2 = urllib2.urlopen(urljoin(base,"cfusion/meteor/Meteor_REST/service/freeSMS"))
-
-
-    if r2.code != 200: #probably 302, we need to log in again
-        data = "msisdn=%s&pin=%s" % (USERNAME,PASSWORD)
+    try:
+        r2 = urllib2.urlopen(urljoin(base,"cfusion/meteor/Meteor_REST/service/freeSMS"))
+        if r2 != 200:
+            raise Exception()
+    except:
+        #500ish error if caused eception, otherwise probably 302 - we need to log in
+        data = "msisdn=%s&pin=%s" % (config['username'],config['password'])
         r1 = urllib2.urlopen(urljoin(base,"/go/mymeteor-login-manager"),data)
         r2 = urllib2.urlopen(urljoin(base,"cfusion/meteor/Meteor_REST/service/freeSMS"))
+
 
 
     #could also use (non-public) interface: cj._cookies['www.mymeteor.ie']['/']['CFID'].value
@@ -167,8 +199,11 @@ def send_text_urllib2(number,text):
         elif cookie.name == "CFTOKEN" and cookie.domain == 'www.mymeteor.ie':
             cftoken = cookie.value
 
-    texts_remaining = json.loads(r2.read())['FreeSMS']['remainingFreeSMS']
-    print "Texts remaining:", texts_remaining
+    texts_remaining_before = json.loads(r2.read())['FreeSMS']['remainingFreeSMS']
+    print "Texts remaining before:", texts_remaining_before
+
+
+    cookieJarDateFix(cj)
 
     cj.save(ignore_discard=True)
 
@@ -184,16 +219,20 @@ def send_text_urllib2(number,text):
     r4 = urllib2.urlopen(urljoin(base,url),data)
     assert(r4.code == 200)
 
+    r5 = urllib2.urlopen(urljoin(base,"cfusion/meteor/Meteor_REST/service/freeSMS"))
+    texts_remaining = json.loads(r5.read())['FreeSMS']['remainingFreeSMS']
+    assert(texts_remaining < texts_remaining_before)
+    print "Texts remaining now:", texts_remaining
+
 
 
 def send_text(number,text):
 
     assert(len(text) <= 480) #480 characters max - will count as 3 texts - this is useful since we won't have to do splitting ourselves
-    assert(number.isdigit())
 
-    assert(number == "REDACTED") #FOR TESTING!!
+    number = sanitizeNumber(number)
 
-    send_text_urllib2(number,text)
+    send_text_urllib2(number,text.rstrip("\n"))
 
 
 
@@ -202,28 +241,48 @@ def main():
     # var = raw_input("Enter something: ")
     # print var
 
+    parseConfig()
+
     from optparse import OptionParser
     parser = OptionParser()
     (options, args) = parser.parse_args()
 
-    number = args[0]
-
-    if not number.isdigit():
-        print "no number"
+    if len(args) < 1:
+        print "No number or alias, exiting"
         return
 
-    print "[ recipient : %s (%s) ]" % ("dunno",number)
+    number = args[0]
+
+    alias = "unknown"
+    if not number.isdigit() or len(number) < 10:
+        try:
+            alias = number
+            number = config['aliases'][alias]
+        except:
+            print "No number or alias, exiting"
+            return 1
+
+        
+
+    print "[ recipient : %s (%s) ]" % (alias,number)
     text = sys.stdin.read()
 
 
     if text != "":
+        print "--sending--"
         send_text(number,text)
 
     # send_text("REDACTED","cool")
 
 
+
+
+
+
+
 if __name__ == "__main__":
     main()
+
 
 
 
