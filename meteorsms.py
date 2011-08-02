@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: iso-8859-15 -*-
 import urllib2
 from urlparse import urljoin
 from urlparse import urlsplit
@@ -121,7 +122,6 @@ class MeteorSMS:
     def __del__(self):
         self.cj.save()
 
-
     def updateCFIDandCFTOKEN(self):
         # could also use (non-public) interface: cj._cookies[urlsplit(base).hostname]['/']['CFID'].value
         for cookie in self.cj:
@@ -134,22 +134,40 @@ class MeteorSMS:
     def login(self):
         data = "msisdn=%s&pin=%s" % (config['username'],config['password'])
         resp1 = urllib2.urlopen(urljoin(self.base,"/go/mymeteor-login-manager"),data)
-        # TODO: figure out when a captcha is presented and bail
+
+        assert(resp1.code == 302)
+        if "/go/login?stat=success&redir=/prepaylanding/&mh=" not in resp1.info()['location']:
+            raise Exception("Could not login - possibly presented with a captcha")
 
         self.updateCFIDandCFTOKEN()
         self.cj.save()
         self.updateFreeTexts()
 
-
     def updateFreeTexts(self):
         self.remaining_req = urllib2.urlopen(urljoin(self.base,"cfusion/meteor/Meteor_REST/service/freeSMS"))
-        if self.remaining_req.code != 200: # a redict is as good as failure here
+        if self.remaining_req.code != 200: # a redirect is as good as failure here
             raise Exception()
         self.remaining_texts = json.loads(self.remaining_req.read())['FreeSMS']['remainingFreeSMS']
 
     def getFreeTexts(self):
         return self.remaining_texts
 
+    def getPrepayBalance(self):
+        resp = urllib2.urlopen(urljoin(self.base,"cfusion/meteor/Meteor_REST/service/prepayBalance"))
+        if resp.code != 200: # a redirect is as good as failure here
+            raise Exception()
+        balance = json.loads(resp.read())['PrePayBalance']['mainBalance']
+        return balance
+
+    def getPhoneBook(self):
+        url = "/mymeteorapi/index.cfm?event=smsAjax&CFID=%s&CFTOKEN=%s&func=initFwtPhonebook" % (self.cfid, self.cftoken)
+        data = "ajaxRequest=initFwtPhonebook"
+        resp = urllib2.urlopen(urljoin(self.base,url),data)
+        d = resp.read()
+
+        regex = re.compile("aSO\(sfp,nPO\(\".*\",\"\d+\|(\d+)\|(.*)\"\)\);")
+        matches = regex.findall(d)
+        return dict((number,name) for name,number in matches)
 
     def sendText(self,number,text):
         texts_remaining_before = self.getFreeTexts()
@@ -157,7 +175,6 @@ class MeteorSMS:
         data = "ajaxRequest=addEnteredMSISDNs&remove=-&add=" + urllib2.quote(("0|" + number).encode("utf-8"))
         resp1 = urllib2.urlopen(urljoin(self.base,url),data)
         assert(resp1.code == 200)
-
 
         url = "/mymeteorapi/index.cfm?event=smsAjax&func=sendSMS&CFID=%s&CFTOKEN=%s" % (self.cfid, self.cftoken)
         data = "ajaxRequest=sendSMS&messageText=" + urllib2.quote(text.encode("utf-8"))
@@ -172,10 +189,20 @@ class MeteorSMS:
         assert(texts_remaining == texts_remaining_before - will_use(len(text)))
 
 
-
 def print_remaining():
     m = MeteorSMS()
     print "Texts remaining:", m.getFreeTexts()
+
+def printPhoneBook():
+    m = MeteorSMS()
+    pb = m.getPhoneBook()
+    for x in pb:
+        print x,'\t',pb[x]
+
+def printBalance():
+    m = MeteorSMS()
+    bal = m.getPrepayBalance()
+    print "Phone credit left:", u"¤" + str(bal)
     
 
 def send_text(number,text):
@@ -199,12 +226,22 @@ def main():
     parser.add_option("-d", "--debug", action="store_true", dest="debug",default=False)
     parser.add_option("-m", "--message", metavar="STRING", help="Don't wait for STDIN, send this message", dest="text")
     parser.add_option("-r", "--remaining", action="store_true", default=False, help="List number of free texts remaining", dest="remaining")
+    parser.add_option("-p", "--phonebook", action="store_true", default=False, help="Display your meteor phonebook", dest="phonebook")
+    parser.add_option("-b", "--balance", action="store_true", default=False, help="Display your phone credit balance", dest="balance")
     (options, args) = parser.parse_args()
     global DEBUG
     DEBUG = options.debug
 
     if options.remaining:
         print_remaining()
+        return
+
+    if options.phonebook:
+        printPhoneBook()
+        return
+
+    if options.balance:
+        printBalance()
         return
 
 
