@@ -11,7 +11,7 @@ import shlex
 
 
 COOKIEFILE = os.path.expanduser("~/.meteorsms/.cookiejar")
-
+DEBUG = False
 config = {}
 
 
@@ -28,6 +28,9 @@ def parseConfig():
     """Parse o2sms style config file"""
     configpath = os.path.expanduser("~/.meteorsms/config")
     configfile = open(configpath,"r")
+    import stat
+    if (stat.S_IMODE(os.stat(configpath).st_mode) & 0b111111) != 0:
+        print "Warning: your config file may be readable by others"
     config['aliases'] = {}
     for line in configfile:
         cline = shlex.split(line)
@@ -38,6 +41,8 @@ def parseConfig():
                 config['password'] = cline[1]
             elif cline[0] == "alias":
                 config['aliases'][cline[1]] = cline[2]
+
+
 
 
 def sanitizeNumber(number):
@@ -68,7 +73,11 @@ class MeteorSMS:
         try:
             self.cj.load(ignore_discard=True)
         except: # create file
-            open(COOKIEFILE,'w')
+            try:
+                open(COOKIEFILE,'w')
+            except IOError:
+                os.mkdir(os.path.dirname(COOKIEFILE))
+                open(COOKIEFILE,'w')
         else:
             self.updateCFIDandCFTOKEN()
 
@@ -177,7 +186,12 @@ def send_text(number,text):
 
 
 def main():
-    parseConfig()
+    try:
+        parseConfig()
+    except IOError:
+        print "No config file, exiting"
+        exit()
+
 
     from optparse import OptionParser
     usage = "usage: %prog [options] <number|alias>"
