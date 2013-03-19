@@ -1,83 +1,76 @@
 <!DOCTYPE html>
 <html>
-<head>
-  <meta charset='utf-8'>
+  <head>
+    <meta charset='utf-8'>
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
 
-  <title>jasonmc/pymeteorsms @ GitHub</title>
+    <link rel="stylesheet" type="text/css" href="stylesheets/stylesheet.css" media="screen" />
+    <link rel="stylesheet" type="text/css" href="stylesheets/pygment_trac.css" media="screen" />
+    <link rel="stylesheet" type="text/css" href="stylesheets/print.css" media="print" />
 
-  <style type="text/css">
-    body {
-      margin-top: 1.0em;
-      background-color: #f4b92a;
-      font-family: Helvetica, Arial, FreeSans, san-serif;
-      color: #000000;
-    }
-    #container {
-      margin: 0 auto;
-      width: 700px;
-    }
-    h1 { font-size: 3.8em; color: #0b46d5; margin-bottom: 3px; }
-    h1 .small { font-size: 0.4em; }
-    h1 a { text-decoration: none }
-    h2 { font-size: 1.5em; color: #0b46d5; }
-    h3 { text-align: center; color: #0b46d5; }
-    a { color: #0b46d5; }
-    .description { font-size: 1.2em; margin-bottom: 30px; margin-top: 30px; font-style: italic;}
-    .download { float: right; }
-    pre { background: #000; color: #fff; padding: 15px;}
-    hr { border: 0; width: 80%; border-bottom: 1px solid #aaa}
-    .footer { text-align:center; padding-top:30px; font-style: italic; }
-  </style>
-</head>
+    <title>Pymeteorsms by jasonmc</title>
+  </head>
 
-<body>
-  <a href="http://github.com/jasonmc/pymeteorsms"><img style="position: absolute; top: 0; right: 0; border: 0;" src="http://s3.amazonaws.com/github/ribbons/forkme_right_darkblue_121621.png" alt="Fork me on GitHub" /></a>
+  <body>
 
-  <div id="container">
+    <header>
+      <div class="container">
+        <h1>Pymeteorsms</h1>
+        <h2>Python program to send text messages via meteor website. Aims to be similar to classic meteorsms Perl script.</h2>
 
-    <div class="download">
-      <a href="http://github.com/jasonmc/pymeteorsms/zipball/master">
-        <img border="0" width="90" src="http://github.com/images/modules/download/zip.png"></a>
-      <a href="http://github.com/jasonmc/pymeteorsms/tarball/master">
-        <img border="0" width="90" src="http://github.com/images/modules/download/tar.png"></a>
-    </div>
+        <section id="downloads">
+          <a href="https://github.com/jasonmc/pymeteorsms/zipball/master" class="btn">Download as .zip</a>
+          <a href="https://github.com/jasonmc/pymeteorsms/tarball/master" class="btn">Download as .tar.gz</a>
+          <a href="https://github.com/jasonmc/pymeteorsms" class="btn btn-github"><span class="icon"></span>View on GitHub</a>
+        </section>
+      </div>
+    </header>
 
-    <h1><a href="http://github.com/jasonmc/pymeteorsms">pymeteorsms</a>
-      <span class="small">by <a href="http://github.com/jasonmc">jasonmc</a></span></h1>
+    <div class="container">
+      <section id="main_content">
+        <h2>PyMeteorSMS</h2>
 
-    <div class="description">
-      Python program to send text messages via meteor website. Aims to be similar to classic meteorsms Perl script.
-    </div>
+<p>Unfortunately meteor changed their web interface recently, which broke the classic meteorsms Perl script. Initially I looked at fixing that script, but it uses TestGen4Web which is practically dead now. I decided to reverse engineer the site myself. They now use ajax requests for lots of things, which would've made TestGen4Web useless anyhow. It does provide us with essentially an API however. I first used mechanize, but due to some bug with https and proxies, I couldn't use it from one of my computers, so I created a version using just urllib2. This has the added bonus of making substantially less requests and therefore is faster.</p>
 
-    <p>Unfortunately meteor changed their web interface recently, which broke the classic meteorsms Perl script. Initially I looked at fixing that script, but it uses TestGen4Web which is practically dead now. I decided to reverse engineer the site myself. They now use ajax requests for lots of things, which would've made TestGen4Web useless anyhow. It does provide us with essentially an API however. I first used mechanize, but due to some bug with https and proxies, I couldn't use it from one of my computers, so I created a version using just urllib2. This has the added bonus of making substantially less requests and therefore is faster.</p><h2>Dependencies</h2>
+<p>This code supports the original meteorsms config script syntax.</p>
+
+<h3>Dependencies</h3>
+
 <p>Python 2.6 onwards include required libraries.</p>
-<h2>Install</h2>
+
+<h3>Install</h3>
+
 <p>Just run the script :)</p>
-<h2>License</h2>
+
+<pre><code>$ bin/meteorsms.py mark
+[ recipient : mark (+35387xxxxxxx) ]
+
+</code></pre>
+
+<h3>License</h3>
+
 <p>GPLv3</p>
-<h2>Authors</h2>
-<p>Jason McCandless (jasonmccandless@gmail.com)<br/><br/>      </p>
-<h2>Contact</h2>
-<p>Jason McCandless (jasonmccandless@gmail.com)<br/>      </p>
 
+<h3>Authors</h3>
 
-    <h2>Download</h2>
-    <p>
-      You can download this project in either
-      <a href="http://github.com/jasonmc/pymeteorsms/zipball/master">zip</a> or
-      <a href="http://github.com/jasonmc/pymeteorsms/tarball/master">tar</a> formats.
-    </p>
-    <p>You can also clone the project with <a href="http://git-scm.com">Git</a>
+<p>Jason McCandless (<a href="mailto:jasonmccandless@gmail.com">jasonmccandless@gmail.com</a>) <a href="https://github.com/jasonmc" class="user-mention">@jasonmc</a></p>
+
+<h3>Contact</h3>
+
+<p>Jason McCandless (<a href="mailto:jasonmccandless@gmail.com">jasonmccandless@gmail.com</a>)</p>
+
+<h3>Download</h3>
+
+<p>You can download this project in either
+<a href="http://github.com/jasonmc/pymeteorsms/zipball/master">zip</a> or
+<a href="http://github.com/jasonmc/pymeteorsms/tarball/master">tar</a> formats.</p>
+
+<p>You can also clone the project with <a href="http://git-scm.com">Git</a>
       by running:
-      <pre>$ git clone git://github.com/jasonmc/pymeteorsms</pre>
-    </p>
-
-    <div class="footer">
-      get the source code on GitHub : <a href="http://github.com/jasonmc/pymeteorsms">jasonmc/pymeteorsms</a>
+      </p><pre>$ git clone git://github.com/jasonmc/pymeteorsms</pre>
+      </section>
     </div>
 
-  </div>
-
-  
-</body>
+    
+  </body>
 </html>
